@@ -2,7 +2,7 @@
 <Configuration status="WARN">
     <Properties>
         <Property name="LOG_PATTERN">%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n</Property>
-        <Property name="APP_LOG_ROOT">${sys:logging.file.path}</Property>
+        <Property name="APP_LOG_ROOT">${sys:logging.file.path:-/var/log/albumstore-api}</Property>
     </Properties>
 
     <Appenders>
@@ -10,7 +10,7 @@
             <PatternLayout pattern="${LOG_PATTERN}"/>
         </Console>
 
-        <RollingFile name="AppLog" fileName="${APP_LOG_ROOT}/application.log"
+        <RollingFile name="FileAppender" fileName="${APP_LOG_ROOT}/application.log"
                      filePattern="${APP_LOG_ROOT}/application-%d{yyyy-MM-dd}-%i.log">
             <PatternLayout pattern="${LOG_PATTERN}"/>
             <Policies>
@@ -20,7 +20,7 @@
             <DefaultRolloverStrategy max="10"/>
         </RollingFile>
 
-        <RollingFile name="ErrorLog" fileName="${APP_LOG_ROOT}/error.log"
+        <RollingFile name="ErrorAppender" fileName="${APP_LOG_ROOT}/error.log"
                      filePattern="${APP_LOG_ROOT}/error-%d{yyyy-MM-dd}-%i.log">
             <PatternLayout pattern="${LOG_PATTERN}"/>
             <Policies>
@@ -32,10 +32,19 @@
     </Appenders>
 
     <Loggers>
-        <Root level="${sys:logging.level}">
+        <Root level="info">
             <AppenderRef ref="Console"/>
-            <AppenderRef ref="AppLog"/>
-            <AppenderRef ref="ErrorLog" level="ERROR"/>
+            <AppenderRef ref="FileAppender"/>
+            <AppenderRef ref="ErrorAppender" level="error"/>
         </Root>
+
+        <!-- API服务特定的日志器配置 -->
+        <Logger name="org.apache.http" level="warn"/>
+        <Logger name="org.apache.catalina" level="warn"/>
+        <Logger name="org.apache.coyote" level="warn"/>
+        <Logger name="org.apache.tomcat" level="warn"/>
+        <Logger name="org.apache.jasper" level="warn"/>
+        <Logger name="com.albumstore.api.db" level="info"/>
+        <Logger name="com.albumstore.api.servlet" level="info"/>
     </Loggers>
 </Configuration>
