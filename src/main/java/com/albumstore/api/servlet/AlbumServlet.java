@@ -25,7 +25,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-@WebServlet(name = "AlbumServlet", urlPatterns = {"/albums", "/albums/*", "/review/*"})
+@WebServlet(name = "AlbumServlet", urlPatterns = {"/albums", "/albums/*", "/review/*", "/admin/*"})
 public class AlbumServlet extends HttpServlet {
     private static final Logger LOGGER = LogManager.getLogger(AlbumServlet.class);
     private static final long serialVersionUID = 1L;
