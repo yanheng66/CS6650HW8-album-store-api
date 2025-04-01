@@ -2,8 +2,10 @@ package com.albumstore.api.util;
 
 public class Constants {
     // API 路径
+// API 路径
     public static final String ALBUMS_PATH = "/albums";
     public static final String REVIEW_PATH = "/review";
+    public static final String ADMIN_RESET_PATH = "/admin/reset"; // 新增的管理员重置路径
 
     // 评论类型
     public static final String REVIEW_LIKE = "like";

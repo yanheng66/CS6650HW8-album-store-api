@@ -21,7 +21,9 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @WebServlet(name = "AlbumServlet", urlPatterns = {"/albums", "/albums/*", "/review/*"})
 public class AlbumServlet extends HttpServlet {
@@ -66,6 +68,10 @@ public class AlbumServlet extends HttpServlet {
             // 处理喜欢/不喜欢专辑请求 - /review/{likeornot}/{albumID}
             else if (uri.contains(Constants.REVIEW_PATH)) {
                 handleReview(request, response);
+            }
+            // 处理数据库重置请求 - /admin/reset
+            else if (uri.endsWith(Constants.ADMIN_RESET_PATH)) {
+                handleDatabaseReset(response);
             } else {
                 LOGGER.warn("Invalid request path: {}", uri);
                 sendError(response, Constants.STATUS_BAD_REQUEST, "Invalid path: " + uri);
@@ -73,6 +79,27 @@ public class AlbumServlet extends HttpServlet {
         } catch (Exception e) {
             LOGGER.error("Error processing POST request: {}", uri, e);
             sendError(response, Constants.STATUS_INTERNAL_SERVER_ERROR, "Internal server error: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 处理清空数据库请求
+     */
+    private void handleDatabaseReset(HttpServletResponse response) throws IOException {
+        LOGGER.info("Handling database reset request.");
+
+        boolean success = albumDAO.clearAllData();
+
+        if (success) {
+            // 发送成功响应
+            response.setContentType(Constants.CONTENT_TYPE_JSON);
+            response.setStatus(Constants.STATUS_OK);
+            PrintWriter out = response.getWriter();
+            out.print(gson.toJson(new ErrorMsg("Reset database successful")));
+            out.flush();
+
+        } else {
+            sendError(response, Constants.STATUS_INTERNAL_SERVER_ERROR, "Reset database failed");
         }
     }
 
@@ -89,6 +116,11 @@ public class AlbumServlet extends HttpServlet {
             if (uri.startsWith(Constants.ALBUMS_PATH) && pathInfo != null && !pathInfo.equals("/")) {
                 String albumId = pathInfo.substring(1);
                 handleGetAlbum(albumId, response);
+            }
+            // 处理获取专辑评论统计请求 - /review/{albumID}
+            else if (uri.startsWith(Constants.REVIEW_PATH) && pathInfo != null && !pathInfo.equals("/")) {
+                String albumId = pathInfo.substring(1);
+                handleGetReviewStats(albumId, response);
             } else {
                 LOGGER.warn("Invalid request path: {}", uri);
                 sendError(response, Constants.STATUS_BAD_REQUEST, "Invalid path or album ID is required");
@@ -97,6 +129,39 @@ public class AlbumServlet extends HttpServlet {
             LOGGER.error("Error processing GET request: {}", uri, e);
             sendError(response, Constants.STATUS_INTERNAL_SERVER_ERROR, "Internal server error: " + e.getMessage());
         }
+    }
+
+    /**
+     * 处理获取专辑评论统计请求
+     */
+    private void handleGetReviewStats(String albumId, HttpServletResponse response)
+            throws IOException {
+        LOGGER.info("Getting review stats for album: {}", albumId);
+
+        // 验证专辑是否存在
+        if (!albumDAO.albumExists(albumId)) {
+            LOGGER.warn("Album not found for review stats: {}", albumId);
+            sendError(response, Constants.STATUS_NOT_FOUND, "Album not found");
+            return;
+        }
+
+        // 获取喜欢和不喜欢的计数
+        int likes = reviewDAO.getLikesCount(albumId);
+        int dislikes = reviewDAO.getDislikesCount(albumId);
+
+        // 创建响应对象
+        Map<String, String> reviewStats = new HashMap<>();
+        reviewStats.put("likes", String.valueOf(likes));
+        reviewStats.put("dislikes", String.valueOf(dislikes));
+
+        // 发送响应
+        response.setContentType(Constants.CONTENT_TYPE_JSON);
+        response.setStatus(Constants.STATUS_OK);
+        PrintWriter out = response.getWriter();
+        out.print(gson.toJson(reviewStats));
+        out.flush();
+
+        LOGGER.info("Review stats sent for album: {}", albumId);
     }
 
     /**

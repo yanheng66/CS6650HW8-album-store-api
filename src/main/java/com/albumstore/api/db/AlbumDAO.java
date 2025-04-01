@@ -141,4 +141,48 @@ public class AlbumDAO {
     private String generateUniqueAlbumId() {
         return UUID.randomUUID().toString().replace("-", "").substring(0, 20);
     }
+
+    /**
+     * 清空所有数据库表数据
+     */
+    public boolean clearAllData() {
+        // 由于外键约束，需要先清空album_reviews表，然后再清空albums表
+        String clearReviewsSql = "DELETE FROM album_reviews";
+        String clearAlbumsSql = "DELETE FROM albums";
+
+        try (Connection conn = DBConnectionPool.getConnection()) {
+            // 开始事务
+            conn.setAutoCommit(false);
+
+            try {
+                // 先清空评论表
+                try (PreparedStatement stmt = conn.prepareStatement(clearReviewsSql)) {
+                    int reviewsDeleted = stmt.executeUpdate();
+                    LOGGER.info("Truncated {} review data.", reviewsDeleted);
+                }
+
+                // 再清空专辑表
+                try (PreparedStatement stmt = conn.prepareStatement(clearAlbumsSql)) {
+                    int albumsDeleted = stmt.executeUpdate();
+                    LOGGER.info("Truncated {} album data.", albumsDeleted);
+                }
+
+                // 提交事务
+                conn.commit();
+                LOGGER.info("Reset successfully.");
+                return true;
+            } catch (SQLException e) {
+                // 出错时回滚
+                conn.rollback();
+                LOGGER.error("Error: ", e);
+                return false;
+            } finally {
+                // 恢复自动提交
+                conn.setAutoCommit(true);
+            }
+        } catch (SQLException e) {
+            LOGGER.error("Error: ", e);
+            return false;
+        }
+    }
 }
