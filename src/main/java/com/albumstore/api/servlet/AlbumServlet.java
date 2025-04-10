@@ -14,6 +14,7 @@ import org.apache.commons.fileupload.servlet.ServletFileUpload;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import javax.servlet.AsyncContext;
 import javax.servlet.ServletException;
 import javax.servlet.annotation.WebServlet;
 import javax.servlet.http.HttpServlet;
@@ -24,11 +25,19 @@ import java.io.PrintWriter;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicLong;
 
-@WebServlet(name = "AlbumServlet", urlPatterns = {"/albums", "/albums/*", "/review/*", "/admin/*"})
+@WebServlet(name = "AlbumServlet", urlPatterns = {"/albums", "/albums/*", "/review/*", "/admin/*"}, asyncSupported = true)
 public class AlbumServlet extends HttpServlet {
     private static final Logger LOGGER = LogManager.getLogger(AlbumServlet.class);
     private static final long serialVersionUID = 1L;
+
+    // 操作计数器，用于减少日志频率
+    private final AtomicLong requestCounter = new AtomicLong(0);
+    private final AtomicLong albumCreationCounter = new AtomicLong(0);
+    private final AtomicLong reviewCounter = new AtomicLong(0);
+    private static final int LOG_INTERVAL = 100; // 每100个请求记录一次详细日志
 
     private AlbumDAO albumDAO;
     private ReviewDAO reviewDAO;
@@ -55,19 +64,24 @@ public class AlbumServlet extends HttpServlet {
     @Override
     protected void doPost(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
-        String pathInfo = request.getPathInfo();
         String uri = request.getRequestURI();
+        long requestId = requestCounter.incrementAndGet();
+        boolean shouldLogDetails = requestId % LOG_INTERVAL == 0;
 
-        LOGGER.info("Handling POST request: {}", uri);
+        if (shouldLogDetails) {
+            LOGGER.info("Handling POST request #{}: {}", requestId, uri);
+        } else {
+            LOGGER.debug("Handling POST request #{}: {}", requestId, uri);
+        }
 
         try {
             // 处理创建新专辑请求 - /albums
             if (uri.endsWith(Constants.ALBUMS_PATH)) {
-                handleNewAlbum(request, response);
+                handleNewAlbum(request, response, shouldLogDetails);
             }
             // 处理喜欢/不喜欢专辑请求 - /review/{likeornot}/{albumID}
             else if (uri.contains(Constants.REVIEW_PATH)) {
-                handleReview(request, response);
+                handleReview(request, response, shouldLogDetails);
             }
             // 处理数据库重置请求 - /admin/reset
             else if (uri.endsWith(Constants.ADMIN_RESET_PATH)) {
@@ -77,7 +91,7 @@ public class AlbumServlet extends HttpServlet {
                 sendError(response, Constants.STATUS_BAD_REQUEST, "Invalid path: " + uri);
             }
         } catch (Exception e) {
-            LOGGER.error("Error processing POST request: {}", uri, e);
+            LOGGER.error("Error processing POST request #{}: {}", requestId, uri, e);
             sendError(response, Constants.STATUS_INTERNAL_SERVER_ERROR, "Internal server error: " + e.getMessage());
         }
     }
@@ -86,7 +100,7 @@ public class AlbumServlet extends HttpServlet {
      * 处理清空数据库请求
      */
     private void handleDatabaseReset(HttpServletResponse response) throws IOException {
-        LOGGER.info("Handling database reset request.");
+        LOGGER.info("Handling database reset request");
 
         boolean success = albumDAO.clearAllData();
 
@@ -97,7 +111,6 @@ public class AlbumServlet extends HttpServlet {
             PrintWriter out = response.getWriter();
             out.print(gson.toJson(new ErrorMsg("Reset database successful")));
             out.flush();
-
         } else {
             sendError(response, Constants.STATUS_INTERNAL_SERVER_ERROR, "Reset database failed");
         }
@@ -108,8 +121,14 @@ public class AlbumServlet extends HttpServlet {
             throws ServletException, IOException {
         String pathInfo = request.getPathInfo();
         String uri = request.getRequestURI();
+        long requestId = requestCounter.incrementAndGet();
+        boolean shouldLogDetails = requestId % LOG_INTERVAL == 0;
 
-        LOGGER.info("Handling GET request: {}", uri);
+        if (shouldLogDetails) {
+            LOGGER.info("Handling GET request #{}: {}", requestId, uri);
+        } else {
+            LOGGER.debug("Handling GET request #{}: {}", requestId, uri);
+        }
 
         try {
             // 处理获取专辑信息请求 - /albums/{albumID}
@@ -126,7 +145,7 @@ public class AlbumServlet extends HttpServlet {
                 sendError(response, Constants.STATUS_BAD_REQUEST, "Invalid path or album ID is required");
             }
         } catch (Exception e) {
-            LOGGER.error("Error processing GET request: {}", uri, e);
+            LOGGER.error("Error processing GET request #{}: {}", requestId, uri, e);
             sendError(response, Constants.STATUS_INTERNAL_SERVER_ERROR, "Internal server error: " + e.getMessage());
         }
     }
@@ -136,7 +155,7 @@ public class AlbumServlet extends HttpServlet {
      */
     private void handleGetReviewStats(String albumId, HttpServletResponse response)
             throws IOException {
-        LOGGER.info("Getting review stats for album: {}", albumId);
+        LOGGER.debug("Getting review stats for album: {}", albumId);
 
         // 验证专辑是否存在
         if (!albumDAO.albumExists(albumId)) {
@@ -145,30 +164,31 @@ public class AlbumServlet extends HttpServlet {
             return;
         }
 
-        // 获取喜欢和不喜欢的计数
-        int likes = reviewDAO.getLikesCount(albumId);
-        int dislikes = reviewDAO.getDislikesCount(albumId);
+        // 获取评论统计
+        Map<String, Integer> reviewStats = reviewDAO.getReviewStats(albumId);
 
         // 创建响应对象
-        Map<String, String> reviewStats = new HashMap<>();
-        reviewStats.put("likes", String.valueOf(likes));
-        reviewStats.put("dislikes", String.valueOf(dislikes));
+        Map<String, String> responseMap = new HashMap<>();
+        responseMap.put("likes", String.valueOf(reviewStats.get("like")));
+        responseMap.put("dislikes", String.valueOf(reviewStats.get("dislike")));
 
         // 发送响应
         response.setContentType(Constants.CONTENT_TYPE_JSON);
         response.setStatus(Constants.STATUS_OK);
         PrintWriter out = response.getWriter();
-        out.print(gson.toJson(reviewStats));
+        out.print(gson.toJson(responseMap));
         out.flush();
 
-        LOGGER.info("Review stats sent for album: {}", albumId);
+        LOGGER.debug("Review stats sent for album: {}", albumId);
     }
 
     /**
      * 处理创建新专辑请求
      */
-    private void handleNewAlbum(HttpServletRequest request, HttpServletResponse response)
+    private void handleNewAlbum(HttpServletRequest request, HttpServletResponse response, boolean shouldLogDetails)
             throws ServletException, IOException {
+        long albumCreationId = albumCreationCounter.incrementAndGet();
+
         // 确保请求包含multipart内容
         if (!ServletFileUpload.isMultipartContent(request)) {
             LOGGER.warn("Request is not multipart");
@@ -177,14 +197,17 @@ public class AlbumServlet extends HttpServlet {
         }
 
         try {
-            // 创建文件上传处理器
+            // 创建文件上传处理器，设置临时文件阈值
             DiskFileItemFactory factory = new DiskFileItemFactory();
+            factory.setSizeThreshold(4 * 1024 * 1024); // 4MB阈值，大文件写入磁盘
             ServletFileUpload upload = new ServletFileUpload(factory);
             upload.setFileSizeMax(Constants.MAX_FILE_SIZE);
 
             // 解析请求
             List<FileItem> items = upload.parseRequest(request);
-            LOGGER.info("Request parsed with {} items", items.size());
+            if (shouldLogDetails) {
+                LOGGER.info("Album creation #{}: Request parsed with {} items", albumCreationId, items.size());
+            }
 
             // 处理上传的文件和表单字段
             byte[] imageData = null;
@@ -197,7 +220,10 @@ public class AlbumServlet extends HttpServlet {
                     // 处理图片文件
                     if ("image".equals(item.getFieldName())) {
                         imageData = item.get();
-                        LOGGER.info("Image received, size: {} bytes", imageData.length);
+                        if (shouldLogDetails) {
+                            LOGGER.info("Album creation #{}: Image received, size: {} bytes",
+                                    albumCreationId, imageData.length);
+                        }
                     }
                 } else {
                     // 处理表单字段
@@ -215,14 +241,12 @@ public class AlbumServlet extends HttpServlet {
                             year = fieldValue;
                             break;
                     }
-
-                    LOGGER.debug("Form field: {} = {}", fieldName, fieldValue);
                 }
             }
 
             // 验证必填字段
             if (imageData == null || artist == null || title == null || year == null) {
-                LOGGER.warn("Missing required fields");
+                LOGGER.warn("Album creation #{}: Missing required fields", albumCreationId);
                 sendError(response, Constants.STATUS_BAD_REQUEST, "Missing required fields");
                 return;
             }
@@ -232,7 +256,8 @@ public class AlbumServlet extends HttpServlet {
             String albumId = albumDAO.saveAlbum(albumInfo, imageData);
 
             if (albumId == null) {
-                LOGGER.error("Failed to save album: {}", albumInfo);
+                LOGGER.error("Album creation #{}: Failed to save album: {}",
+                        albumCreationId, albumInfo);
                 sendError(response, Constants.STATUS_INTERNAL_SERVER_ERROR, "Failed to save album");
                 return;
             }
@@ -247,9 +272,10 @@ public class AlbumServlet extends HttpServlet {
             out.print(gson.toJson(metaData));
             out.flush();
 
-            LOGGER.info("Album created successfully: {}", albumId);
+            LOGGER.debug("Album creation #{}: Album created successfully with ID: {}",
+                    albumCreationId, albumId);
         } catch (Exception e) {
-            LOGGER.error("Error creating new album", e);
+            LOGGER.error("Album creation #{}: Error creating new album", albumCreationId, e);
             sendError(response, Constants.STATUS_INTERNAL_SERVER_ERROR, e.getMessage());
         }
     }
@@ -259,7 +285,7 @@ public class AlbumServlet extends HttpServlet {
      */
     private void handleGetAlbum(String albumId, HttpServletResponse response)
             throws IOException {
-        LOGGER.info("Getting album info: {}", albumId);
+        LOGGER.debug("Getting album info: {}", albumId);
 
         // 获取专辑信息
         AlbumInfo albumInfo = albumDAO.getAlbumById(albumId);
@@ -277,20 +303,21 @@ public class AlbumServlet extends HttpServlet {
         out.print(gson.toJson(albumInfo));
         out.flush();
 
-        LOGGER.info("Album info sent: {}", albumId);
+        LOGGER.debug("Album info sent: {}", albumId);
     }
 
     /**
-     * 处理喜欢/不喜欢专辑请求
+     * 处理喜欢/不喜欢专辑请求 - 使用异步方式
      */
-    private void handleReview(HttpServletRequest request, HttpServletResponse response)
+    private void handleReview(HttpServletRequest request, HttpServletResponse response, boolean shouldLogDetails)
             throws IOException {
         String uri = request.getRequestURI();
         String[] pathParts = uri.split("/");
+        long reviewId = reviewCounter.incrementAndGet();
 
         // 验证路径格式: /review/{likeornot}/{albumID}
         if (pathParts.length < 4) {
-            LOGGER.warn("Invalid review path: {}", uri);
+            LOGGER.warn("Review #{}: Invalid review path: {}", reviewId, uri);
             sendError(response, Constants.STATUS_BAD_REQUEST, "Invalid path format");
             return;
         }
@@ -298,11 +325,17 @@ public class AlbumServlet extends HttpServlet {
         String reviewType = pathParts[pathParts.length - 2];
         String albumId = pathParts[pathParts.length - 1];
 
-        LOGGER.info("Processing review: {} for album: {}", reviewType, albumId);
+        if (shouldLogDetails) {
+            LOGGER.info("Review #{}: Processing review: {} for album: {}",
+                    reviewId, reviewType, albumId);
+        } else {
+            LOGGER.debug("Review #{}: Processing review: {} for album: {}",
+                    reviewId, reviewType, albumId);
+        }
 
         // 验证reviewType
         if (!Constants.REVIEW_LIKE.equals(reviewType) && !Constants.REVIEW_DISLIKE.equals(reviewType)) {
-            LOGGER.warn("Invalid review type: {}", reviewType);
+            LOGGER.warn("Review #{}: Invalid review type: {}", reviewId, reviewType);
             sendError(response, Constants.STATUS_BAD_REQUEST,
                     "Review type must be '" + Constants.REVIEW_LIKE + "' or '" + Constants.REVIEW_DISLIKE + "'");
             return;
@@ -310,24 +343,56 @@ public class AlbumServlet extends HttpServlet {
 
         // 验证专辑是否存在
         if (!albumDAO.albumExists(albumId)) {
-            LOGGER.warn("Album not found for review: {}", albumId);
+            LOGGER.warn("Review #{}: Album not found for review: {}", reviewId, albumId);
             sendError(response, Constants.STATUS_NOT_FOUND, "Album not found");
             return;
         }
 
-        // 发送评论消息到Producer服务
-        boolean success = producerClient.sendReviewMessage(reviewType, albumId);
+        // 使用异步模式处理请求
+        final AsyncContext asyncContext = request.startAsync();
+        asyncContext.setTimeout(10000); // 10秒超时
 
-        if (!success) {
-            LOGGER.error("Failed to send review message: {} for album: {}", reviewType, albumId);
-            sendError(response, Constants.STATUS_INTERNAL_SERVER_ERROR, "Failed to process review");
-            return;
-        }
+        // 异步发送评论消息到Producer服务
+        final String finalReviewType = reviewType;
+        final String finalAlbumId = albumId;
+        final long finalReviewId = reviewId;
 
-        // 发送成功响应
-        response.setStatus(Constants.STATUS_CREATED);
+        CompletableFuture<Boolean> future = producerClient.sendReviewMessageAsync(reviewType, albumId);
 
-        LOGGER.info("Review message sent successfully: {} for album: {}", reviewType, albumId);
+        future.thenAccept(success -> {
+            try {
+                HttpServletResponse asyncResponse = (HttpServletResponse) asyncContext.getResponse();
+
+                if (success) {
+                    // 发送成功响应
+                    asyncResponse.setStatus(Constants.STATUS_CREATED);
+                    LOGGER.debug("Review #{}: Message sent successfully: {} for album: {}",
+                            finalReviewId, finalReviewType, finalAlbumId);
+                } else {
+                    // 发送错误响应
+                    sendError(asyncResponse, Constants.STATUS_INTERNAL_SERVER_ERROR,
+                            "Failed to process review");
+                    LOGGER.error("Review #{}: Failed to send message: {} for album: {}",
+                            finalReviewId, finalReviewType, finalAlbumId);
+                }
+            } catch (Exception e) {
+                LOGGER.error("Review #{}: Error processing async response", finalReviewId, e);
+            } finally {
+                asyncContext.complete();
+            }
+        }).exceptionally(e -> {
+            try {
+                HttpServletResponse asyncResponse = (HttpServletResponse) asyncContext.getResponse();
+                sendError(asyncResponse, Constants.STATUS_INTERNAL_SERVER_ERROR,
+                        "Error processing review: " + e.getMessage());
+                LOGGER.error("Review #{}: Exception in async processing", finalReviewId, e);
+            } catch (Exception ex) {
+                LOGGER.error("Review #{}: Error sending error response", finalReviewId, ex);
+            } finally {
+                asyncContext.complete();
+            }
+            return null;
+        });
     }
 
     /**
@@ -335,7 +400,7 @@ public class AlbumServlet extends HttpServlet {
      */
     private void sendError(HttpServletResponse response, int statusCode, String message)
             throws IOException {
-        LOGGER.warn("Sending error response: {} - {}", statusCode, message);
+        LOGGER.debug("Sending error response: {} - {}", statusCode, message);
 
         ErrorMsg errorMsg = new ErrorMsg(message);
         response.setContentType(Constants.CONTENT_TYPE_JSON);
